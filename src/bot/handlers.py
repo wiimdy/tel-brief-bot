@@ -2,10 +2,11 @@
 
 import logging
 from datetime import time
-from typing import List
+from typing import List, Tuple, Optional
 
 from telegram import Update
 from telegram.ext import ContextTypes
+from telegram.error import TelegramError
 from sqlalchemy.orm import Session
 
 from src.db.database import db
@@ -13,6 +14,64 @@ from src.db.models import ChatSettings
 from src.config import Config
 
 logger = logging.getLogger(__name__)
+
+
+async def resolve_chat_identifier(
+    chat_identifier: str, bot
+) -> Tuple[Optional[int], Optional[str], Optional[str]]:
+    """Resolve a chat identifier (username or ID) to a numeric chat_id.
+
+    Args:
+        chat_identifier: Either @username or numeric chat_id as string
+        bot: Telegram Bot instance
+
+    Returns:
+        Tuple of (chat_id, chat_title, error_message)
+        - On success: (chat_id, chat_title, None)
+        - On failure: (None, None, error_message)
+    """
+    # Check if it's a username (starts with @)
+    if chat_identifier.startswith("@"):
+        try:
+            chat = await bot.get_chat(chat_identifier)
+            return chat.id, chat.title or chat.username, None
+        except TelegramError as e:
+            error_msg = str(e)
+            if "chat not found" in error_msg.lower():
+                return (
+                    None,
+                    None,
+                    (
+                        f"❌ Chat '{chat_identifier}' not found.\n\n"
+                        "Make sure:\n"
+                        "• The username is correct\n"
+                        "• The chat is public, OR\n"
+                        "• The bot is a member of the chat"
+                    ),
+                )
+            return None, None, f"❌ Error resolving '{chat_identifier}': {error_msg}"
+
+    # Try to parse as numeric ID
+    try:
+        chat_id = int(chat_identifier)
+        # Optionally try to get chat info for the title
+        try:
+            chat = await bot.get_chat(chat_id)
+            return chat_id, chat.title or str(chat_id), None
+        except TelegramError:
+            # Can't get chat info, but ID is valid - proceed anyway
+            return chat_id, None, None
+    except ValueError:
+        return (
+            None,
+            None,
+            (
+                "❌ Invalid chat identifier.\n\n"
+                "Use either:\n"
+                "• @username (e.g., @minchoisfuture)\n"
+                "• Numeric ID (e.g., -123456789)"
+            ),
+        )
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -239,26 +298,31 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def addchat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /addchat command - Add a new chatroom by ID.
+    """Handle /addchat command - Add a new chatroom by ID or username.
 
-    Usage: /addchat <chat_id>
-    Example: /addchat -123456789
+    Usage: /addchat <chat_id or @username>
+    Examples: /addchat -123456789 or /addchat @minchoisfuture
     """
     user_id = update.effective_user.id
     args = context.args
 
     if not args or len(args) < 1:
         await update.message.reply_text(
-            "📝 Usage: /addchat <chat_id>\n\n"
-            "Example: /addchat -123456789\n\n"
-            "💡 Tip: Get chat_id by forwarding a message from the target chat to @userinfobot"
+            "📝 Usage: /addchat <chat_id or @username>\n\n"
+            "Examples:\n"
+            "/addchat -123456789\n"
+            "/addchat @minchoisfuture\n\n"
+            "💡 Tip: Use @username for public chats, or get chat_id from @userinfobot"
         )
         return
 
-    try:
-        target_chat_id = int(args[0])
-    except ValueError:
-        await update.message.reply_text("❌ Invalid chat_id. Must be a number.")
+    # Resolve chat identifier (username or ID)
+    target_chat_id, chat_title, error = await resolve_chat_identifier(
+        args[0], context.bot
+    )
+
+    if error:
+        await update.message.reply_text(error)
         return
 
     logger.info(f"Addchat command from user={user_id} for chat_id={target_chat_id}")
@@ -268,10 +332,14 @@ async def addchat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # Check if chat already exists
         existing = session.query(ChatSettings).filter_by(chat_id=target_chat_id).first()
 
+        chat_display = (
+            f"{chat_title} ({target_chat_id})" if chat_title else str(target_chat_id)
+        )
+
         if existing:
             if existing.active:
                 await update.message.reply_text(
-                    f"⚠️ Chat {target_chat_id} is already registered.\n\n"
+                    f"⚠️ Chat {chat_display} is already registered.\n\n"
                     "Use /editchat to modify settings or /listchats to see all chats."
                 )
             else:
@@ -285,7 +353,7 @@ async def addchat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 await reschedule_chat(context.application, target_chat_id)
 
                 await update.message.reply_text(
-                    f"✅ Chat {target_chat_id} has been reactivated!\n\n"
+                    f"✅ Chat {chat_display} has been reactivated!\n\n"
                     "Use /editchat to modify settings."
                 )
             return
@@ -308,7 +376,7 @@ async def addchat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await schedule_chat(context.application, chat_settings)
 
         await update.message.reply_text(
-            f"✅ Chat {target_chat_id} added successfully!\n\n"
+            f"✅ Chat {chat_display} added successfully!\n\n"
             f"Default settings:\n"
             f"⏰ Brief times: 09:00, 18:00\n"
             f"🌍 Timezone: {Config.DEFAULT_TIMEZONE}\n\n"
@@ -326,27 +394,30 @@ async def addchat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def editchat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /editchat command - Edit settings for a specific chatroom.
 
-    Usage: /editchat <chat_id> timezone=<tz> times=<HH:MM,HH:MM> topics=<topic1,topic2>
-    Example: /editchat -123456789 timezone=Asia/Seoul times=15:00,21:00
+    Usage: /editchat <chat_id or @username> timezone=<tz> times=<HH:MM,HH:MM> topics=<topic1,topic2>
+    Examples: /editchat -123456789 timezone=Asia/Seoul or /editchat @minchoisfuture times=15:00
     """
     user_id = update.effective_user.id
     args = context.args
 
     if not args or len(args) < 1:
         await update.message.reply_text(
-            "📝 Usage: /editchat <chat_id> [settings]\n\n"
+            "📝 Usage: /editchat <chat_id or @username> [settings]\n\n"
             "Examples:\n"
-            "/editchat -123456789 timezone=Asia/Seoul\n"
+            "/editchat @minchoisfuture timezone=Asia/Seoul\n"
             "/editchat -123456789 times=09:00,18:00\n"
-            "/editchat -123456789 topics=tech,news\n\n"
+            "/editchat @mychannel topics=tech,news\n\n"
             "💡 Tip: Run without settings to see current config"
         )
         return
 
-    try:
-        target_chat_id = int(args[0])
-    except ValueError:
-        await update.message.reply_text("❌ Invalid chat_id. Must be a number.")
+    # Resolve chat identifier (username or ID)
+    target_chat_id, chat_title, error = await resolve_chat_identifier(
+        args[0], context.bot
+    )
+
+    if error:
+        await update.message.reply_text(error)
         return
 
     logger.info(f"Editchat command from user={user_id} for chat_id={target_chat_id}")
@@ -492,24 +563,29 @@ async def removechat_command(
 ) -> None:
     """Handle /removechat command - Remove (deactivate) a chatroom.
 
-    Usage: /removechat <chat_id>
-    Example: /removechat -123456789
+    Usage: /removechat <chat_id or @username>
+    Examples: /removechat -123456789 or /removechat @minchoisfuture
     """
     user_id = update.effective_user.id
     args = context.args
 
     if not args or len(args) < 1:
         await update.message.reply_text(
-            "📝 Usage: /removechat <chat_id>\n\n"
-            "Example: /removechat -123456789\n\n"
+            "📝 Usage: /removechat <chat_id or @username>\n\n"
+            "Examples:\n"
+            "/removechat -123456789\n"
+            "/removechat @minchoisfuture\n\n"
             "⚠️ This will deactivate briefs for the specified chat."
         )
         return
 
-    try:
-        target_chat_id = int(args[0])
-    except ValueError:
-        await update.message.reply_text("❌ Invalid chat_id. Must be a number.")
+    # Resolve chat identifier (username or ID)
+    target_chat_id, chat_title, error = await resolve_chat_identifier(
+        args[0], context.bot
+    )
+
+    if error:
+        await update.message.reply_text(error)
         return
 
     logger.info(f"Removechat command from user={user_id} for chat_id={target_chat_id}")

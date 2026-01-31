@@ -94,10 +94,10 @@ python -m src.main
 | `/settings` | Configure timezone, times, and topics | `/settings timezone=Asia/Seoul times=15:00,21:00 topics=tech,news` |
 | `/status` | View current configuration | `/status` |
 | `/test` | Send test brief immediately | `/test` |
-| `/addchat` | Add external chatroom to receive briefs | `/addchat -123456789` |
-| `/editchat` | Edit settings for a specific chatroom | `/editchat -123456789 timezone=UTC` |
+| `/addchat` | Add external chatroom to receive briefs | `/addchat @minchoisfuture` or `/addchat -123456789` |
+| `/editchat` | Edit settings for a specific chatroom | `/editchat @mychannel timezone=UTC` |
 | `/listchats` | List all chatrooms you manage | `/listchats` |
-| `/removechat` | Remove a chatroom (soft delete) | `/removechat -123456789` |
+| `/removechat` | Remove a chatroom (soft delete) | `/removechat @minchoisfuture` |
 
 ### Configuration Examples
 
@@ -118,16 +118,18 @@ python -m src.main
 
 ### Multi-Chat Management
 
-Manage multiple chatrooms from a single conversation:
+Manage multiple chatrooms from a single conversation. You can use either `@username` (for public chats) or numeric `chat_id`:
 
 **Add a new chatroom:**
 ```
+/addchat @minchoisfuture
 /addchat -123456789
 ```
 
 **Configure the chatroom:**
 ```
-/editchat -123456789 timezone=Asia/Seoul times=09:00,21:00 topics=news
+/editchat @minchoisfuture timezone=Asia/Seoul times=09:00,21:00 topics=news
+/editchat -123456789 timezone=UTC
 ```
 
 **View all your managed chatrooms:**
@@ -137,10 +139,14 @@ Manage multiple chatrooms from a single conversation:
 
 **Remove a chatroom:**
 ```
+/removechat @minchoisfuture
 /removechat -123456789
 ```
 
-> **Note**: You can only edit/remove chatrooms you added. Get the chat_id by forwarding a message from the target chat to [@userinfobot](https://t.me/userinfobot).
+> **Note**: 
+> - You can only edit/remove chatrooms you added
+> - `@username` works for public channels/groups, or chats where the bot is already a member
+> - For private groups, use the numeric chat_id (get it from [@userinfobot](https://t.me/userinfobot))
 
 ## Supported Timezones 🌍
 
