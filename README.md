@@ -8,6 +8,7 @@ A Telegram bot that sends scheduled briefings at user-configured times with time
 - **⏰ Multiple Daily Briefs**: Set multiple brief times (e.g., 09:00, 15:00, 21:00)
 - **📌 Custom Topics**: Configure topics of interest for personalized content
 - **👥 Multi-User Support**: Each chat has independent settings
+- **🔗 Multi-Chat Management**: Add and manage multiple external chatrooms by ID
 - **💾 Persistent Storage**: SQLite (default) or PostgreSQL for production
 - **🐳 Docker Ready**: Easy deployment with Docker and docker-compose
 - **🔄 Auto-Rescheduling**: Settings changes instantly update scheduled jobs
@@ -93,6 +94,10 @@ python -m src.main
 | `/settings` | Configure timezone, times, and topics | `/settings timezone=Asia/Seoul times=15:00,21:00 topics=tech,news` |
 | `/status` | View current configuration | `/status` |
 | `/test` | Send test brief immediately | `/test` |
+| `/addchat` | Add external chatroom to receive briefs | `/addchat -123456789` |
+| `/editchat` | Edit settings for a specific chatroom | `/editchat -123456789 timezone=UTC` |
+| `/listchats` | List all chatrooms you manage | `/listchats` |
+| `/removechat` | Remove a chatroom (soft delete) | `/removechat -123456789` |
 
 ### Configuration Examples
 
@@ -110,6 +115,32 @@ python -m src.main
 ```
 /settings timezone=Europe/London times=08:00,12:00,18:00 topics=tech,finance
 ```
+
+### Multi-Chat Management
+
+Manage multiple chatrooms from a single conversation:
+
+**Add a new chatroom:**
+```
+/addchat -123456789
+```
+
+**Configure the chatroom:**
+```
+/editchat -123456789 timezone=Asia/Seoul times=09:00,21:00 topics=news
+```
+
+**View all your managed chatrooms:**
+```
+/listchats
+```
+
+**Remove a chatroom:**
+```
+/removechat -123456789
+```
+
+> **Note**: You can only edit/remove chatrooms you added. Get the chat_id by forwarding a message from the target chat to [@userinfobot](https://t.me/userinfobot).
 
 ## Supported Timezones 🌍
 
