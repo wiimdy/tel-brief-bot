@@ -51,3 +51,10 @@ logs/
 
 # Docker
 docker-compose.override.yml
+
+# Telegram sessions (SENSITIVE!)
+*.session
+*.session-journal
+sessions/*.session
+sessions/*.session-journal
+
