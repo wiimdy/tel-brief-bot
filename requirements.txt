@@ -1,0 +1,18 @@
+# Telegram Bot
+python-telegram-bot==20.7
+
+# Database
+SQLAlchemy==2.0.25
+alembic==1.13.1
+
+# Scheduling
+APScheduler==3.10.4
+
+# Timezone support
+pytz==2024.1
+
+# Environment variables
+python-dotenv==1.0.0
+
+# Async support
+aiofiles==23.2.1
