@@ -1,16 +1,14 @@
-"""Telegram bot command handlers."""
+"""Telegram bot command handlers using Supabase."""
 
 import logging
-from datetime import time
+from datetime import datetime
 from typing import List, Tuple, Optional
 
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import TelegramError
-from sqlalchemy.orm import Session
 
-from src.db.database import db
-from src.db.models import ChatSettings
+from src.db.supabase_client import get_supabase
 from src.config import Config
 
 logger = logging.getLogger(__name__)
@@ -42,14 +40,14 @@ async def resolve_chat_identifier(
                     None,
                     None,
                     (
-                        f"❌ Chat '{chat_identifier}' not found.\n\n"
+                        f"Chat '{chat_identifier}' not found.\n\n"
                         "Make sure:\n"
-                        "• The username is correct\n"
-                        "• The chat is public, OR\n"
-                        "• The bot is a member of the chat"
+                        "- The username is correct\n"
+                        "- The chat is public, OR\n"
+                        "- The bot is a member of the chat"
                     ),
                 )
-            return None, None, f"❌ Error resolving '{chat_identifier}': {error_msg}"
+            return None, None, f"Error resolving '{chat_identifier}': {error_msg}"
 
     # Try to parse as numeric ID
     try:
@@ -66,10 +64,10 @@ async def resolve_chat_identifier(
             None,
             None,
             (
-                "❌ Invalid chat identifier.\n\n"
+                "Invalid chat identifier.\n\n"
                 "Use either:\n"
-                "• @username (e.g., @minchoisfuture)\n"
-                "• Numeric ID (e.g., -123456789)"
+                "- @username (e.g., @minchoisfuture)\n"
+                "- Numeric ID (e.g., -123456789)"
             ),
         )
 
@@ -81,47 +79,44 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     logger.info(f"Start command from chat_id={chat_id}, user={user.username}")
 
-    # Check if chat already exists in database
-    session: Session = db.get_sync_session()
-    try:
-        chat_settings = session.query(ChatSettings).filter_by(chat_id=chat_id).first()
+    db = get_supabase()
+    chat_settings = db.get_chat_settings(chat_id)
 
-        if not chat_settings:
-            # Create new chat settings
-            chat_settings = ChatSettings(
-                chat_id=chat_id,
-                added_by_user_id=user.id,
-                timezone=Config.DEFAULT_TIMEZONE,
-                brief_times='["09:00", "18:00"]',
-                topics="[]",
-                active=True,
-            )
-            session.add(chat_settings)
-            session.commit()
+    if not chat_settings:
+        # Create new chat settings
+        db.create_chat_settings(
+            {
+                "chat_id": chat_id,
+                "added_by_user_id": user.id,
+                "timezone": Config.DEFAULT_TIMEZONE,
+                "brief_times": ["09:00", "18:00"],
+                "topics": [],
+                "active": True,
+            }
+        )
 
-            message = (
-                "👋 Welcome to Telegram Brief Bot!\n\n"
-                f"Default settings:\n"
-                f"⏰ Brief times: 09:00, 18:00\n"
-                f"🌍 Timezone: {Config.DEFAULT_TIMEZONE}\n\n"
-                "Commands:\n"
-                "/settings - Configure your settings\n"
-                "/status - View current configuration\n"
-                "/test - Send test brief immediately"
-            )
-        else:
-            message = (
-                "👋 Welcome back!\n\n"
-                "Commands:\n"
-                "/settings - Configure your settings\n"
-                "/status - View current configuration\n"
-                "/test - Send test brief immediately"
-            )
+        message = (
+            "Welcome to Telegram Brief Bot!\n\n"
+            f"Default settings:\n"
+            f"Brief times: 09:00, 18:00\n"
+            f"Timezone: {Config.DEFAULT_TIMEZONE}\n\n"
+            "Commands:\n"
+            "/settings - Configure your settings\n"
+            "/topics - Set interest topics\n"
+            "/status - View current configuration\n"
+            "/test - Send test brief immediately"
+        )
+    else:
+        message = (
+            "Welcome back!\n\n"
+            "Commands:\n"
+            "/settings - Configure your settings\n"
+            "/topics - Set interest topics\n"
+            "/status - View current configuration\n"
+            "/test - Send test brief immediately"
+        )
 
-        await update.message.reply_text(message)
-
-    finally:
-        session.close()
+    await update.message.reply_text(message)
 
 
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -133,35 +128,34 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     chat_id = update.effective_chat.id
     args = context.args
 
+    db = get_supabase()
+    chat_settings = db.get_chat_settings(chat_id)
+
     if not args:
         # Show current settings and usage
-        session: Session = db.get_sync_session()
-        try:
-            chat_settings = (
-                session.query(ChatSettings).filter_by(chat_id=chat_id).first()
+        if chat_settings:
+            brief_times = chat_settings.get("brief_times", [])
+            topics = chat_settings.get("topics", [])
+
+            message = (
+                "Current Settings:\n\n"
+                f"Timezone: {chat_settings.get('timezone', 'UTC')}\n"
+                f"Brief times: {', '.join(brief_times)}\n"
+                f"Topics: {', '.join(topics) if topics else 'None'}\n"
+                f"Active: {'Yes' if chat_settings.get('active') else 'No'}\n\n"
+                "Usage:\n"
+                "/settings timezone=<tz> times=<HH:MM,HH:MM> topics=<topic1,topic2>\n\n"
+                "Example:\n"
+                "/settings timezone=Asia/Seoul times=15:00,21:00 topics=tech,news"
             )
+        else:
+            message = "No settings found. Use /start to initialize."
 
-            if chat_settings:
-                brief_times = chat_settings.get_brief_times()
-                topics = chat_settings.get_topics()
+        await update.message.reply_text(message)
+        return
 
-                message = (
-                    "⚙️ Current Settings:\n\n"
-                    f"🌍 Timezone: {chat_settings.timezone}\n"
-                    f"⏰ Brief times: {', '.join(brief_times)}\n"
-                    f"📌 Topics: {', '.join(topics) if topics else 'None'}\n"
-                    f"✅ Active: {'Yes' if chat_settings.active else 'No'}\n\n"
-                    "Usage:\n"
-                    "/settings timezone=<tz> times=<HH:MM,HH:MM> topics=<topic1,topic2>\n\n"
-                    "Example:\n"
-                    "/settings timezone=Asia/Seoul times=15:00,21:00 topics=tech,news"
-                )
-            else:
-                message = "No settings found. Use /start to initialize."
-
-            await update.message.reply_text(message)
-        finally:
-            session.close()
+    if not chat_settings:
+        await update.message.reply_text("No settings found. Use /start to initialize.")
         return
 
     # Parse settings from arguments
@@ -197,75 +191,45 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     # Update database
-    session: Session = db.get_sync_session()
-    try:
-        chat_settings = session.query(ChatSettings).filter_by(chat_id=chat_id).first()
+    db.update_chat_settings(chat_id, settings_update)
 
-        if not chat_settings:
-            await update.message.reply_text(
-                "No settings found. Use /start to initialize."
-            )
-            return
+    # Reschedule jobs
+    from src.bot.scheduler import reschedule_chat
 
-        # Apply updates
-        if "timezone" in settings_update:
-            chat_settings.timezone = settings_update["timezone"]
-        if "brief_times" in settings_update:
-            chat_settings.set_brief_times(settings_update["brief_times"])
-        if "topics" in settings_update:
-            chat_settings.set_topics(settings_update["topics"])
+    await reschedule_chat(context.application, chat_id)
 
-        session.commit()
-
-        # Reschedule jobs (will be implemented in scheduler.py)
-        from src.bot.scheduler import reschedule_chat
-
-        await reschedule_chat(context.application, chat_id)
-
-        await update.message.reply_text(
-            "✅ Settings updated successfully!\n\n"
-            "Use /status to view current configuration."
-        )
-
-    except Exception as e:
-        logger.error(f"Error updating settings: {e}")
-        await update.message.reply_text(f"❌ Error updating settings: {str(e)}")
-
-    finally:
-        session.close()
+    await update.message.reply_text(
+        "Settings updated successfully!\n\nUse /status to view current configuration."
+    )
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /status command - Show current configuration."""
     chat_id = update.effective_chat.id
 
-    session: Session = db.get_sync_session()
-    try:
-        chat_settings = session.query(ChatSettings).filter_by(chat_id=chat_id).first()
+    db = get_supabase()
+    chat_settings = db.get_chat_settings(chat_id)
 
-        if not chat_settings:
-            await update.message.reply_text(
-                "No settings found. Use /start to initialize."
-            )
-            return
+    if not chat_settings:
+        await update.message.reply_text("No settings found. Use /start to initialize.")
+        return
 
-        brief_times = chat_settings.get_brief_times()
-        topics = chat_settings.get_topics()
+    brief_times = chat_settings.get("brief_times", [])
+    topics = chat_settings.get("topics", [])
+    created_at = chat_settings.get("created_at", "")
+    updated_at = chat_settings.get("updated_at", "")
 
-        message = (
-            "📊 Current Status:\n\n"
-            f"🌍 Timezone: {chat_settings.timezone}\n"
-            f"⏰ Brief times: {', '.join(brief_times)}\n"
-            f"📌 Topics: {', '.join(topics) if topics else 'None'}\n"
-            f"✅ Active: {'Yes' if chat_settings.active else 'No'}\n"
-            f"📅 Created: {chat_settings.created_at.strftime('%Y-%m-%d %H:%M')}\n"
-            f"🔄 Updated: {chat_settings.updated_at.strftime('%Y-%m-%d %H:%M')}"
-        )
+    message = (
+        "Current Status:\n\n"
+        f"Timezone: {chat_settings.get('timezone', 'UTC')}\n"
+        f"Brief times: {', '.join(brief_times)}\n"
+        f"Topics: {', '.join(topics) if topics else 'None'}\n"
+        f"Active: {'Yes' if chat_settings.get('active') else 'No'}\n"
+        f"Created: {created_at[:19] if created_at else 'N/A'}\n"
+        f"Updated: {updated_at[:19] if updated_at else 'N/A'}"
+    )
 
-        await update.message.reply_text(message)
-
-    finally:
-        session.close()
+    await update.message.reply_text(message)
 
 
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -277,24 +241,18 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # Generate and send test brief
     from src.bot.briefing import generate_brief
 
-    session: Session = db.get_sync_session()
-    try:
-        chat_settings = session.query(ChatSettings).filter_by(chat_id=chat_id).first()
+    db = get_supabase()
+    chat_settings = db.get_chat_settings(chat_id)
 
-        if not chat_settings:
-            await update.message.reply_text(
-                "No settings found. Use /start to initialize."
-            )
-            return
+    if not chat_settings:
+        await update.message.reply_text("No settings found. Use /start to initialize.")
+        return
 
-        brief_content = await generate_brief(chat_settings)
+    brief_content = await generate_brief(chat_settings)
 
-        await update.message.reply_text(
-            f"🧪 Test Brief ({chat_settings.timezone}):\n\n{brief_content}"
-        )
-
-    finally:
-        session.close()
+    await update.message.reply_text(
+        f"Test Brief ({chat_settings.get('timezone', 'UTC')}):\n\n{brief_content}"
+    )
 
 
 async def addchat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -308,11 +266,11 @@ async def addchat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if not args or len(args) < 1:
         await update.message.reply_text(
-            "📝 Usage: /addchat <chat_id or @username>\n\n"
+            "Usage: /addchat <chat_id or @username>\n\n"
             "Examples:\n"
             "/addchat -123456789\n"
             "/addchat @minchoisfuture\n\n"
-            "💡 Tip: Use @username for public chats, or get chat_id from @userinfobot"
+            "Tip: Use @username for public chats, or get chat_id from @userinfobot"
         )
         return
 
@@ -327,68 +285,59 @@ async def addchat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     logger.info(f"Addchat command from user={user_id} for chat_id={target_chat_id}")
 
-    session: Session = db.get_sync_session()
-    try:
-        # Check if chat already exists
-        existing = session.query(ChatSettings).filter_by(chat_id=target_chat_id).first()
+    db = get_supabase()
+    existing = db.get_chat_settings(target_chat_id)
 
-        chat_display = (
-            f"{chat_title} ({target_chat_id})" if chat_title else str(target_chat_id)
-        )
+    chat_display = (
+        f"{chat_title} ({target_chat_id})" if chat_title else str(target_chat_id)
+    )
 
-        if existing:
-            if existing.active:
-                await update.message.reply_text(
-                    f"⚠️ Chat {chat_display} is already registered.\n\n"
-                    "Use /editchat to modify settings or /listchats to see all chats."
-                )
-            else:
-                # Reactivate if inactive
-                existing.active = True
-                existing.added_by_user_id = user_id
-                session.commit()
+    if existing:
+        if existing.get("active"):
+            await update.message.reply_text(
+                f"Chat {chat_display} is already registered.\n\n"
+                "Use /editchat to modify settings or /listchats to see all chats."
+            )
+        else:
+            # Reactivate if inactive
+            db.update_chat_settings(
+                target_chat_id, {"active": True, "added_by_user_id": user_id}
+            )
 
-                from src.bot.scheduler import reschedule_chat
+            from src.bot.scheduler import reschedule_chat
 
-                await reschedule_chat(context.application, target_chat_id)
+            await reschedule_chat(context.application, target_chat_id)
 
-                await update.message.reply_text(
-                    f"✅ Chat {chat_display} has been reactivated!\n\n"
-                    "Use /editchat to modify settings."
-                )
-            return
+            await update.message.reply_text(
+                f"Chat {chat_display} has been reactivated!\n\n"
+                "Use /editchat to modify settings."
+            )
+        return
 
-        # Create new chat settings
-        chat_settings = ChatSettings(
-            chat_id=target_chat_id,
-            added_by_user_id=user_id,
-            timezone=Config.DEFAULT_TIMEZONE,
-            brief_times='["09:00", "18:00"]',
-            topics="[]",
-            active=True,
-        )
-        session.add(chat_settings)
-        session.commit()
+    # Create new chat settings
+    db.create_chat_settings(
+        {
+            "chat_id": target_chat_id,
+            "added_by_user_id": user_id,
+            "timezone": Config.DEFAULT_TIMEZONE,
+            "brief_times": ["09:00", "18:00"],
+            "topics": [],
+            "active": True,
+        }
+    )
 
-        # Schedule briefs for the new chat
-        from src.bot.scheduler import schedule_chat
+    # Schedule briefs for the new chat
+    from src.bot.scheduler import schedule_chat
 
-        await schedule_chat(context.application, chat_settings)
+    await schedule_chat(context.application, db.get_chat_settings(target_chat_id))
 
-        await update.message.reply_text(
-            f"✅ Chat {chat_display} added successfully!\n\n"
-            f"Default settings:\n"
-            f"⏰ Brief times: 09:00, 18:00\n"
-            f"🌍 Timezone: {Config.DEFAULT_TIMEZONE}\n\n"
-            "Use /editchat to customize settings."
-        )
-
-    except Exception as e:
-        logger.error(f"Error adding chat: {e}")
-        await update.message.reply_text(f"❌ Error adding chat: {str(e)}")
-
-    finally:
-        session.close()
+    await update.message.reply_text(
+        f"Chat {chat_display} added successfully!\n\n"
+        f"Default settings:\n"
+        f"Brief times: 09:00, 18:00\n"
+        f"Timezone: {Config.DEFAULT_TIMEZONE}\n\n"
+        "Use /editchat to customize settings."
+    )
 
 
 async def editchat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -402,12 +351,12 @@ async def editchat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if not args or len(args) < 1:
         await update.message.reply_text(
-            "📝 Usage: /editchat <chat_id or @username> [settings]\n\n"
+            "Usage: /editchat <chat_id or @username> [settings]\n\n"
             "Examples:\n"
             "/editchat @minchoisfuture timezone=Asia/Seoul\n"
             "/editchat -123456789 times=09:00,18:00\n"
             "/editchat @mychannel topics=tech,news\n\n"
-            "💡 Tip: Run without settings to see current config"
+            "Tip: Run without settings to see current config"
         )
         return
 
@@ -422,97 +371,80 @@ async def editchat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     logger.info(f"Editchat command from user={user_id} for chat_id={target_chat_id}")
 
-    session: Session = db.get_sync_session()
-    try:
-        chat_settings = (
-            session.query(ChatSettings).filter_by(chat_id=target_chat_id).first()
+    db = get_supabase()
+    chat_settings = db.get_chat_settings(target_chat_id)
+
+    if not chat_settings:
+        await update.message.reply_text(
+            f"Chat {target_chat_id} not found.\n\nUse /addchat to add it first."
         )
+        return
 
-        if not chat_settings:
-            await update.message.reply_text(
-                f"❌ Chat {target_chat_id} not found.\n\nUse /addchat to add it first."
-            )
-            return
+    # Check ownership
+    if chat_settings.get("added_by_user_id") != user_id:
+        await update.message.reply_text(
+            f"You don't have permission to edit chat {target_chat_id}.\n\n"
+            "Only the user who added this chat can edit it."
+        )
+        return
 
-        # Check ownership
-        if chat_settings.added_by_user_id != user_id:
-            await update.message.reply_text(
-                f"🔒 You don't have permission to edit chat {target_chat_id}.\n\n"
-                "Only the user who added this chat can edit it."
-            )
-            return
-
-        # If only chat_id provided, show current settings
-        if len(args) == 1:
-            brief_times = chat_settings.get_brief_times()
-            topics = chat_settings.get_topics()
-
-            await update.message.reply_text(
-                f"⚙️ Settings for chat {target_chat_id}:\n\n"
-                f"🌍 Timezone: {chat_settings.timezone}\n"
-                f"⏰ Brief times: {', '.join(brief_times)}\n"
-                f"📌 Topics: {', '.join(topics) if topics else 'None'}\n"
-                f"✅ Active: {'Yes' if chat_settings.active else 'No'}\n\n"
-                "To edit:\n"
-                f"/editchat {target_chat_id} timezone=Asia/Seoul times=09:00,18:00"
-            )
-            return
-
-        # Parse settings from remaining arguments
-        settings_update = {}
-
-        for arg in args[1:]:
-            if "=" in arg:
-                key, value = arg.split("=", 1)
-
-                if key == "timezone":
-                    settings_update["timezone"] = value
-                elif key == "times":
-                    times = [t.strip() for t in value.split(",")]
-                    for t in times:
-                        try:
-                            hour, minute = t.split(":")
-                            int(hour), int(minute)
-                        except:
-                            await update.message.reply_text(
-                                f"❌ Invalid time format: {t}. Use HH:MM"
-                            )
-                            return
-                    settings_update["brief_times"] = times
-                elif key == "topics":
-                    topics = [t.strip() for t in value.split(",")]
-                    settings_update["topics"] = topics
-
-        if not settings_update:
-            await update.message.reply_text("❌ No valid settings provided.")
-            return
-
-        # Apply updates
-        if "timezone" in settings_update:
-            chat_settings.timezone = settings_update["timezone"]
-        if "brief_times" in settings_update:
-            chat_settings.set_brief_times(settings_update["brief_times"])
-        if "topics" in settings_update:
-            chat_settings.set_topics(settings_update["topics"])
-
-        session.commit()
-
-        # Reschedule jobs
-        from src.bot.scheduler import reschedule_chat
-
-        await reschedule_chat(context.application, target_chat_id)
+    # If only chat_id provided, show current settings
+    if len(args) == 1:
+        brief_times = chat_settings.get("brief_times", [])
+        topics = chat_settings.get("topics", [])
 
         await update.message.reply_text(
-            f"✅ Chat {target_chat_id} settings updated!\n\n"
-            f"Use /editchat {target_chat_id} to view current settings."
+            f"Settings for chat {target_chat_id}:\n\n"
+            f"Timezone: {chat_settings.get('timezone', 'UTC')}\n"
+            f"Brief times: {', '.join(brief_times)}\n"
+            f"Topics: {', '.join(topics) if topics else 'None'}\n"
+            f"Active: {'Yes' if chat_settings.get('active') else 'No'}\n\n"
+            "To edit:\n"
+            f"/editchat {target_chat_id} timezone=Asia/Seoul times=09:00,18:00"
         )
+        return
 
-    except Exception as e:
-        logger.error(f"Error editing chat: {e}")
-        await update.message.reply_text(f"❌ Error editing chat: {str(e)}")
+    # Parse settings from remaining arguments
+    settings_update = {}
 
-    finally:
-        session.close()
+    for arg in args[1:]:
+        if "=" in arg:
+            key, value = arg.split("=", 1)
+
+            if key == "timezone":
+                settings_update["timezone"] = value
+            elif key == "times":
+                times = [t.strip() for t in value.split(",")]
+                for t in times:
+                    try:
+                        hour, minute = t.split(":")
+                        int(hour), int(minute)
+                    except:
+                        await update.message.reply_text(
+                            f"Invalid time format: {t}. Use HH:MM"
+                        )
+                        return
+                settings_update["brief_times"] = times
+            elif key == "topics":
+                topics = [t.strip() for t in value.split(",")]
+                settings_update["topics"] = topics
+
+    if not settings_update:
+        await update.message.reply_text("No valid settings provided.")
+        return
+
+    # Apply updates
+    db.update_chat_settings(target_chat_id, settings_update)
+
+    # Reschedule jobs
+    from src.bot.scheduler import reschedule_chat
+
+    await reschedule_chat(context.application, target_chat_id)
+
+    await update.message.reply_text(
+        f"Chat {target_chat_id} settings updated!\n\n"
+        f"Use /editchat {target_chat_id} to view current settings."
+    )
 
 
 async def listchats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -521,41 +453,31 @@ async def listchats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     logger.info(f"Listchats command from user={user_id}")
 
-    session: Session = db.get_sync_session()
-    try:
-        # Get all active chats owned by this user
-        chats = (
-            session.query(ChatSettings)
-            .filter_by(added_by_user_id=user_id, active=True)
-            .all()
+    db = get_supabase()
+    chats = db.get_user_chats(user_id)
+
+    if not chats:
+        await update.message.reply_text(
+            "You haven't added any chatrooms yet.\n\nUse /addchat <chat_id> to add one."
+        )
+        return
+
+    message_parts = ["Your managed chatrooms:\n"]
+
+    for chat in chats:
+        brief_times = chat.get("brief_times", [])
+        topics = chat.get("topics", [])
+
+        message_parts.append(
+            f"\nChat ID: {chat.get('chat_id')}\n"
+            f"   Timezone: {chat.get('timezone', 'UTC')}\n"
+            f"   Times: {', '.join(brief_times)}\n"
+            f"   Topics: {', '.join(topics) if topics else 'None'}"
         )
 
-        if not chats:
-            await update.message.reply_text(
-                "📭 You haven't added any chatrooms yet.\n\n"
-                "Use /addchat <chat_id> to add one."
-            )
-            return
+    message_parts.append(f"\n\nTotal: {len(chats)} chatroom(s)")
 
-        message_parts = ["📋 Your managed chatrooms:\n"]
-
-        for chat in chats:
-            brief_times = chat.get_brief_times()
-            topics = chat.get_topics()
-
-            message_parts.append(
-                f"\n🔹 Chat ID: {chat.chat_id}\n"
-                f"   🌍 Timezone: {chat.timezone}\n"
-                f"   ⏰ Times: {', '.join(brief_times)}\n"
-                f"   📌 Topics: {', '.join(topics) if topics else 'None'}"
-            )
-
-        message_parts.append(f"\n\n📊 Total: {len(chats)} chatroom(s)")
-
-        await update.message.reply_text("".join(message_parts))
-
-    finally:
-        session.close()
+    await update.message.reply_text("".join(message_parts))
 
 
 async def removechat_command(
@@ -571,11 +493,11 @@ async def removechat_command(
 
     if not args or len(args) < 1:
         await update.message.reply_text(
-            "📝 Usage: /removechat <chat_id or @username>\n\n"
+            "Usage: /removechat <chat_id or @username>\n\n"
             "Examples:\n"
             "/removechat -123456789\n"
             "/removechat @minchoisfuture\n\n"
-            "⚠️ This will deactivate briefs for the specified chat."
+            "This will deactivate briefs for the specified chat."
         )
         return
 
@@ -590,51 +512,38 @@ async def removechat_command(
 
     logger.info(f"Removechat command from user={user_id} for chat_id={target_chat_id}")
 
-    session: Session = db.get_sync_session()
-    try:
-        chat_settings = (
-            session.query(ChatSettings).filter_by(chat_id=target_chat_id).first()
-        )
+    db = get_supabase()
+    chat_settings = db.get_chat_settings(target_chat_id)
 
-        if not chat_settings:
-            await update.message.reply_text(f"❌ Chat {target_chat_id} not found.")
-            return
+    if not chat_settings:
+        await update.message.reply_text(f"Chat {target_chat_id} not found.")
+        return
 
-        # Check ownership
-        if chat_settings.added_by_user_id != user_id:
-            await update.message.reply_text(
-                f"🔒 You don't have permission to remove chat {target_chat_id}.\n\n"
-                "Only the user who added this chat can remove it."
-            )
-            return
-
-        if not chat_settings.active:
-            await update.message.reply_text(
-                f"⚠️ Chat {target_chat_id} is already inactive."
-            )
-            return
-
-        # Soft delete (deactivate)
-        chat_settings.active = False
-        session.commit()
-
-        # Unschedule jobs
-        from src.bot.scheduler import unschedule_chat
-
-        await unschedule_chat(context.application, target_chat_id)
-
+    # Check ownership
+    if chat_settings.get("added_by_user_id") != user_id:
         await update.message.reply_text(
-            f"✅ Chat {target_chat_id} has been removed.\n\n"
-            "Briefs will no longer be sent to this chat.\n"
-            "Use /addchat to re-add it if needed."
+            f"You don't have permission to remove chat {target_chat_id}.\n\n"
+            "Only the user who added this chat can remove it."
         )
+        return
 
-    except Exception as e:
-        logger.error(f"Error removing chat: {e}")
-        await update.message.reply_text(f"❌ Error removing chat: {str(e)}")
+    if not chat_settings.get("active"):
+        await update.message.reply_text(f"Chat {target_chat_id} is already inactive.")
+        return
 
-    finally:
-        session.close()
+    # Soft delete (deactivate)
+    db.deactivate_chat(target_chat_id)
+
+    # Unschedule jobs
+    from src.bot.scheduler import unschedule_chat
+
+    await unschedule_chat(context.application, target_chat_id)
+
+    await update.message.reply_text(
+        f"Chat {target_chat_id} has been removed.\n\n"
+        "Briefs will no longer be sent to this chat.\n"
+        "Use /addchat to re-add it if needed."
+    )
 
 
 async def topics_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -648,94 +557,85 @@ async def topics_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = update.effective_user.id
     args = context.args
 
-    session: Session = db.get_sync_session()
-    try:
-        # Get chat settings for current chat, or the user's first chat
-        chat_settings = session.query(ChatSettings).filter_by(chat_id=chat_id).first()
+    db = get_supabase()
 
-        if not chat_settings:
-            # Try to find any chat owned by this user
-            chat_settings = (
-                session.query(ChatSettings)
-                .filter_by(added_by_user_id=user_id, active=True)
-                .first()
-            )
+    # Get chat settings for current chat, or the user's first chat
+    chat_settings = db.get_chat_settings(chat_id)
 
-        if not chat_settings:
-            await update.message.reply_text(
-                "❌ No chats configured yet.\n\n"
-                "Use /start to initialize or /addchat to add a chatroom."
-            )
-            return
+    if not chat_settings:
+        # Try to find any chat owned by this user
+        user_chats = db.get_user_chats(user_id)
+        if user_chats:
+            chat_settings = user_chats[0]
 
-        # If no args, show current topics
-        if not args:
-            topics = chat_settings.get_topics()
-
-            if topics:
-                message = (
-                    "📌 **Current Topics:**\n\n"
-                    + "\n".join(f"  • {topic}" for topic in topics)
-                    + "\n\n"
-                    "These topics are used by AI to filter relevant messages.\n\n"
-                    "To change topics:\n"
-                    "`/topics web3,ai,security,crypto`"
-                )
-            else:
-                message = (
-                    "📌 **No Topics Set**\n\n"
-                    "Topics help the AI filter messages that matter to you.\n\n"
-                    "Examples:\n"
-                    "`/topics web3,ai,security`\n"
-                    "`/topics crypto,defi,nft`\n"
-                    "`/topics tech,startup,investing`\n\n"
-                    "The AI will analyze messages and only include those "
-                    "related to your topics in the brief."
-                )
-
-            await update.message.reply_text(message, parse_mode="Markdown")
-            return
-
-        # Set new topics
-        # Join all args in case user used spaces
-        topics_str = " ".join(args)
-        # Split by comma and clean up
-        new_topics = [t.strip().lower() for t in topics_str.split(",") if t.strip()]
-
-        if not new_topics:
-            await update.message.reply_text(
-                "❌ No valid topics provided.\n\n"
-                "Use comma-separated topics:\n"
-                "`/topics web3,ai,security`"
-            )
-            return
-
-        # Limit topics to reasonable number
-        if len(new_topics) > 10:
-            new_topics = new_topics[:10]
-            await update.message.reply_text(
-                "⚠️ Limited to 10 topics maximum. Extra topics were ignored."
-            )
-
-        # Update topics
-        chat_settings.set_topics(new_topics)
-        session.commit()
-
+    if not chat_settings:
         await update.message.reply_text(
-            f"✅ Topics updated!\n\n"
-            f"📌 **Your Topics:**\n"
-            + "\n".join(f"  • {topic}" for topic in new_topics)
-            + "\n\n"
-            "The AI will filter messages based on these topics.\n"
-            "Use `/test` to see a sample brief.",
-            parse_mode="Markdown",
+            "No chats configured yet.\n\n"
+            "Use /start to initialize or /addchat to add a chatroom."
+        )
+        return
+
+    # If no args, show current topics
+    if not args:
+        topics = chat_settings.get("topics", [])
+
+        if topics:
+            message = (
+                "**Current Topics:**\n\n"
+                + "\n".join(f"  - {topic}" for topic in topics)
+                + "\n\n"
+                "These topics are used by AI to filter relevant messages.\n\n"
+                "To change topics:\n"
+                "`/topics web3,ai,security,crypto`"
+            )
+        else:
+            message = (
+                "**No Topics Set**\n\n"
+                "Topics help the AI filter messages that matter to you.\n\n"
+                "Examples:\n"
+                "`/topics web3,ai,security`\n"
+                "`/topics crypto,defi,nft`\n"
+                "`/topics tech,startup,investing`\n\n"
+                "The AI will analyze messages and only include those "
+                "related to your topics in the brief."
+            )
+
+        await update.message.reply_text(message, parse_mode="Markdown")
+        return
+
+    # Set new topics
+    # Join all args in case user used spaces
+    topics_str = " ".join(args)
+    # Split by comma and clean up
+    new_topics = [t.strip().lower() for t in topics_str.split(",") if t.strip()]
+
+    if not new_topics:
+        await update.message.reply_text(
+            "No valid topics provided.\n\n"
+            "Use comma-separated topics:\n"
+            "`/topics web3,ai,security`"
+        )
+        return
+
+    # Limit topics to reasonable number
+    if len(new_topics) > 10:
+        new_topics = new_topics[:10]
+        await update.message.reply_text(
+            "Limited to 10 topics maximum. Extra topics were ignored."
         )
 
-        logger.info(f"User {user_id} updated topics to: {new_topics}")
+    # Update topics
+    target_chat_id = chat_settings.get("chat_id")
+    db.update_chat_settings(target_chat_id, {"topics": new_topics})
 
-    except Exception as e:
-        logger.error(f"Error in topics command: {e}")
-        await update.message.reply_text(f"❌ Error updating topics: {str(e)}")
+    await update.message.reply_text(
+        f"Topics updated!\n\n"
+        f"**Your Topics:**\n"
+        + "\n".join(f"  - {topic}" for topic in new_topics)
+        + "\n\n"
+        "The AI will filter messages based on these topics.\n"
+        "Use `/test` to see a sample brief.",
+        parse_mode="Markdown",
+    )
 
-    finally:
-        session.close()
+    logger.info(f"User {user_id} updated topics to: {new_topics}")

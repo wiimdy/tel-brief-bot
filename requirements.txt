@@ -7,6 +7,7 @@ telethon==1.36.0
 # Database
 SQLAlchemy==2.0.25
 alembic==1.13.1
+supabase==2.3.4
 
 # Scheduling
 APScheduler==3.10.4

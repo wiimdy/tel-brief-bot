@@ -1,14 +1,13 @@
-"""APScheduler integration for timezone-aware brief scheduling."""
+"""APScheduler integration for timezone-aware brief scheduling using Supabase."""
 
 import logging
 from datetime import time
+from typing import Dict, Any
 from zoneinfo import ZoneInfo
 
 from telegram.ext import Application
-from sqlalchemy.orm import Session
 
-from src.db.database import db
-from src.db.models import ChatSettings
+from src.db.supabase_client import get_supabase
 from src.bot.briefing import send_scheduled_brief
 
 logger = logging.getLogger(__name__)
@@ -22,30 +21,31 @@ async def schedule_all_chats(application: Application) -> None:
     """
     logger.info("Scheduling briefing jobs for all active chats...")
 
-    session: Session = db.get_sync_session()
-    try:
-        # Get all active chat settings
-        active_chats = session.query(ChatSettings).filter_by(active=True).all()
+    db = get_supabase()
+    active_chats = db.get_all_active_chats()
 
-        for chat_settings in active_chats:
-            await schedule_chat(application, chat_settings)
+    for chat_settings in active_chats:
+        await schedule_chat(application, chat_settings)
 
-        logger.info(f"Scheduled briefing jobs for {len(active_chats)} chats")
-
-    finally:
-        session.close()
+    logger.info(f"Scheduled briefing jobs for {len(active_chats)} chats")
 
 
-async def schedule_chat(application: Application, chat_settings: ChatSettings) -> None:
+async def schedule_chat(
+    application: Application, chat_settings: Dict[str, Any]
+) -> None:
     """Schedule briefing jobs for a single chat.
 
     Args:
         application: Telegram Application instance
-        chat_settings: ChatSettings object with timezone and brief times
+        chat_settings: Chat settings dictionary from Supabase
     """
-    chat_id = chat_settings.chat_id
-    timezone = chat_settings.timezone
-    brief_times = chat_settings.get_brief_times()
+    chat_id = chat_settings.get("chat_id")
+    timezone = chat_settings.get("timezone", "UTC")
+    brief_times = chat_settings.get("brief_times", ["09:00", "18:00"])
+
+    if not chat_id:
+        logger.error("No chat_id in chat_settings")
+        return
 
     logger.info(
         f"Scheduling chat_id={chat_id}, timezone={timezone}, times={brief_times}"
@@ -99,22 +99,18 @@ async def reschedule_chat(application: Application, chat_id: int) -> None:
         application: Telegram Application instance
         chat_id: Chat ID to reschedule
     """
-    session: Session = db.get_sync_session()
-    try:
-        chat_settings = session.query(ChatSettings).filter_by(chat_id=chat_id).first()
+    db = get_supabase()
+    chat_settings = db.get_chat_settings(chat_id)
 
-        if chat_settings and chat_settings.active:
-            await schedule_chat(application, chat_settings)
-            logger.info(f"Rescheduled chat {chat_id}")
-        else:
-            # Remove all jobs if chat is inactive
-            current_jobs = application.job_queue.get_jobs_by_name(f"brief_{chat_id}")
-            for job in current_jobs:
-                job.schedule_removal()
-            logger.info(f"Removed jobs for inactive chat {chat_id}")
-
-    finally:
-        session.close()
+    if chat_settings and chat_settings.get("active"):
+        await schedule_chat(application, chat_settings)
+        logger.info(f"Rescheduled chat {chat_id}")
+    else:
+        # Remove all jobs if chat is inactive
+        current_jobs = application.job_queue.get_jobs_by_name(f"brief_{chat_id}")
+        for job in current_jobs:
+            job.schedule_removal()
+        logger.info(f"Removed jobs for inactive chat {chat_id}")
 
 
 async def unschedule_chat(application: Application, chat_id: int) -> None:

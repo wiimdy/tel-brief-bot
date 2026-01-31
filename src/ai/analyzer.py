@@ -1,11 +1,10 @@
-"""Message analyzer combining collection and AI analysis."""
+"""Message analyzer combining collection and AI analysis with auto-cleanup."""
 
 import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
-from src.db.models import CollectedMessage, ChatSettings
-from src.db.database import db
+from src.db.supabase_client import get_supabase
 from src.ai.gemini import GeminiClient, get_gemini_client
 from src.userbot.collector import MessageCollector, get_message_collector
 
@@ -13,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class MessageAnalyzer:
-    """Analyzes collected messages using AI."""
+    """Analyzes collected messages using AI with automatic cleanup."""
 
     def __init__(
         self,
@@ -28,6 +27,7 @@ class MessageAnalyzer:
         """
         self.gemini = gemini_client or get_gemini_client()
         self.collector = collector or get_message_collector()
+        self.db = get_supabase()
 
     async def analyze_for_user(
         self, user_id: int, topics: Optional[List[str]] = None
@@ -41,24 +41,13 @@ class MessageAnalyzer:
         Returns:
             Analysis result dict with 'summary', 'message_count', 'topics', etc.
         """
-        session = db.get_sync_session()
+        # Get user's chats
+        chats = self.db.get_user_chats(user_id)
+        chat_ids = [chat.get("chat_id") for chat in chats if chat.get("chat_id")]
 
-        try:
-            # Get user's chat IDs
-            chats = (
-                session.query(ChatSettings)
-                .filter_by(added_by_user_id=user_id, active=True)
-                .all()
-            )
-
-            chat_ids = [chat.chat_id for chat in chats]
-
-            # Get topics from first chat if not provided
-            if topics is None and chats:
-                topics = chats[0].get_topics()
-
-        finally:
-            session.close()
+        # Get topics from first chat if not provided
+        if topics is None and chats:
+            topics = chats[0].get("topics", [])
 
         if not chat_ids:
             return {
@@ -81,31 +70,34 @@ class MessageAnalyzer:
                 "relevant_count": 0,
             }
 
-        # Convert to dict format for AI
+        # Convert to format for AI
         message_dicts = []
+        message_ids = []
         for msg in messages:
+            message_ids.append(msg.get("id"))
             message_dicts.append(
                 {
-                    "id": msg.id,
-                    "source_chat_id": msg.source_chat_id,
-                    "source_chat_name": msg.source_chat_name,
-                    "sender_id": msg.sender_id,
-                    "sender_name": msg.sender_name,
-                    "text": msg.text,
-                    "timestamp": msg.timestamp,
+                    "id": msg.get("id"),
+                    "source_chat_id": msg.get("source_chat_id"),
+                    "source_chat_name": msg.get("source_chat_name"),
+                    "sender_id": msg.get("sender_id"),
+                    "sender_name": msg.get("sender_name"),
+                    "text": msg.get("text"),
+                    "timestamp": msg.get("timestamp"),
                 }
             )
 
         logger.info(f"Analyzing {len(message_dicts)} messages for user {user_id}")
 
-        # Filter by topics
+        # Filter by topics using AI
         relevant_messages = await self.gemini.filter_messages_by_topics(
             message_dicts, topics or []
         )
 
         if not relevant_messages:
-            # Mark all as processed anyway
-            self.collector.mark_messages_processed([m["id"] for m in message_dicts])
+            # Delete all messages immediately (cleanup)
+            deleted = self.collector.delete_messages(message_ids)
+            logger.info(f"Cleaned up {deleted} messages (none relevant)")
 
             return {
                 "success": True,
@@ -118,10 +110,6 @@ class MessageAnalyzer:
         # Summarize relevant messages
         summary = await self.gemini.summarize_messages(relevant_messages, topics or [])
 
-        # Mark messages as processed
-        message_ids = [m["id"] for m in message_dicts]
-        self.collector.mark_messages_processed(message_ids)
-
         # Record brief history
         self.collector.record_brief_sent(
             user_id=user_id,
@@ -129,6 +117,10 @@ class MessageAnalyzer:
             topics=topics or [],
             summary_preview=summary[:500] if summary else "",
         )
+
+        # DELETE all processed messages immediately (auto-cleanup)
+        deleted = self.collector.delete_messages(message_ids)
+        logger.info(f"Auto-cleanup: deleted {deleted} messages after brief generation")
 
         return {
             "success": True,
@@ -163,33 +155,33 @@ class MessageAnalyzer:
 
         # Build formatted brief
         lines = [
-            f"📬 **Your Message Brief**",
-            f"📅 {current_time.strftime('%A, %B %d, %Y')}",
-            f"🕐 {current_time.strftime('%I:%M %p %Z')}",
+            f"Your Message Brief",
+            f"{current_time.strftime('%A, %B %d, %Y')}",
+            f"{current_time.strftime('%I:%M %p %Z')}",
             "",
-            "─" * 30,
+            "-" * 30,
         ]
 
         if not result["success"]:
-            lines.append(f"\n⚠️ {result.get('error', 'Unknown error')}")
+            lines.append(f"\n{result.get('error', 'Unknown error')}")
         elif result["message_count"] == 0:
-            lines.append("\n📭 No new messages since your last brief.")
+            lines.append("\nNo new messages since your last brief.")
         else:
-            lines.append(f"\n📊 **Stats**")
-            lines.append(f"• Total messages: {result['message_count']}")
-            lines.append(f"• Relevant to your topics: {result['relevant_count']}")
+            lines.append(f"\n**Stats**")
+            lines.append(f"- Total messages: {result['message_count']}")
+            lines.append(f"- Relevant to your topics: {result['relevant_count']}")
 
             if result["topics"]:
-                lines.append(f"• Topics: {', '.join(result['topics'])}")
+                lines.append(f"- Topics: {', '.join(result['topics'])}")
 
             lines.append("")
-            lines.append("─" * 30)
+            lines.append("-" * 30)
             lines.append("")
-            lines.append("📝 **Summary**")
+            lines.append("**Summary**")
             lines.append("")
             lines.append(result["summary"] or "No summary available.")
 
-        lines.extend(["", "─" * 30, "", "💡 Commands: /topics, /listchats, /status"])
+        lines.extend(["", "-" * 30, "", "Commands: /topics, /listchats, /status"])
 
         return "\n".join(lines)
 

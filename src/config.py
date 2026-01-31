@@ -14,11 +14,16 @@ class Config:
     # Telegram Bot Token (REQUIRED)
     TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
-    # Database URL (defaults to SQLite in current directory)
+    # Database URL (defaults to SQLite in current directory) - Legacy
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///briefbot.db")
 
     # SQL Debug mode
     SQL_DEBUG: bool = os.getenv("SQL_DEBUG", "false").lower() == "true"
+
+    # Supabase (Primary database)
+    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+    SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
+    USE_SUPABASE: bool = os.getenv("USE_SUPABASE", "true").lower() == "true"
 
     # Default timezone for new chats
     DEFAULT_TIMEZONE: str = os.getenv("DEFAULT_TIMEZONE", "UTC")

@@ -9,7 +9,8 @@ A Telegram bot that sends scheduled briefings with AI-powered message summarizat
 - **Timezone-Aware Scheduling**: Configure briefs in your local timezone with automatic DST handling
 - **Multiple Daily Briefs**: Set multiple brief times (e.g., 09:00, 15:00, 21:00)
 - **Multi-Chat Monitoring**: Monitor multiple channels/groups and get aggregated briefs
-- **Persistent Storage**: SQLite (default) or PostgreSQL for production
+- **Supabase Database**: Free cloud database with auto-cleanup after briefs
+- **Auto-Cleanup**: Messages are deleted after each brief to save storage
 - **Docker Ready**: Easy deployment with Docker and docker-compose
 
 ## Architecture
@@ -22,8 +23,8 @@ tel-brief-bot/
 │   │   ├── scheduler.py     # APScheduler timezone-aware scheduling
 │   │   └── briefing.py      # Brief generation with AI
 │   ├── db/
-│   │   ├── models.py        # SQLAlchemy models
-│   │   └── database.py      # Database connection
+│   │   ├── supabase_client.py  # Supabase client wrapper
+│   │   └── models.py           # Legacy SQLAlchemy models
 │   ├── userbot/             # Telegram User API (Telethon)
 │   │   ├── client.py        # Telethon wrapper
 │   │   ├── collector.py     # Message collection
@@ -63,7 +64,62 @@ tel-brief-bot/
 1. Message [@userinfobot](https://t.me/userinfobot) on Telegram
 2. Note your user ID number
 
-### 2. Configure Environment
+**Supabase Database:**
+1. Go to [supabase.com](https://supabase.com) and create a free account
+2. Create a new project
+3. Go to Settings -> API and copy the URL and anon key
+4. Go to SQL Editor and run the table creation SQL (see below)
+
+### 2. Create Supabase Tables
+
+Run this SQL in your Supabase SQL Editor:
+
+```sql
+-- Chat Settings Table
+CREATE TABLE chat_settings (
+  id BIGSERIAL PRIMARY KEY,
+  chat_id BIGINT UNIQUE NOT NULL,
+  added_by_user_id BIGINT,
+  timezone VARCHAR(50) NOT NULL DEFAULT 'UTC',
+  brief_times JSONB NOT NULL DEFAULT '["09:00", "18:00"]',
+  topics JSONB NOT NULL DEFAULT '[]',
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Collected Messages Table (temporary storage)
+CREATE TABLE collected_messages (
+  id BIGSERIAL PRIMARY KEY,
+  source_chat_id BIGINT NOT NULL,
+  source_chat_name VARCHAR(255),
+  sender_id BIGINT,
+  sender_name VARCHAR(255),
+  message_id BIGINT NOT NULL,
+  text TEXT,
+  timestamp TIMESTAMPTZ NOT NULL,
+  processed BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Brief History Table
+CREATE TABLE brief_history (
+  id BIGSERIAL PRIMARY KEY,
+  recipient_id BIGINT NOT NULL,
+  brief_time TIMESTAMPTZ NOT NULL,
+  message_count INTEGER DEFAULT 0,
+  topics_covered JSONB,
+  summary_preview TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Indexes
+CREATE INDEX idx_chat_settings_chat_id ON chat_settings(chat_id);
+CREATE INDEX idx_collected_messages_processed ON collected_messages(processed);
+CREATE INDEX idx_brief_history_recipient ON brief_history(recipient_id);
+```
+
+### 3. Configure Environment
 
 ```bash
 cp .env.example .env
@@ -75,6 +131,10 @@ Update `.env` with your credentials:
 ```env
 # Required
 TELEGRAM_BOT_TOKEN=your_bot_token_here
+
+# Supabase Database
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your_supabase_anon_key_here
 
 # For AI briefings (optional but recommended)
 ENABLE_MESSAGE_COLLECTION=true
@@ -194,7 +254,8 @@ Commands: /topics, /listchats, /status
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `TELEGRAM_BOT_TOKEN` | **Required**. Bot token from @BotFather | - |
-| `DATABASE_URL` | Database connection string | `sqlite:///briefbot.db` |
+| `SUPABASE_URL` | **Required**. Your Supabase project URL | - |
+| `SUPABASE_KEY` | **Required**. Your Supabase anon/public key | - |
 | `DEFAULT_TIMEZONE` | Default timezone for new chats | `UTC` |
 | `DEFAULT_BRIEF_TIMES` | Default brief times | `09:00,18:00` |
 | `ENABLE_MESSAGE_COLLECTION` | Enable AI briefings | `false` |
@@ -207,17 +268,17 @@ Commands: /topics, /listchats, /status
 | `COLLECTION_INTERVAL` | Message collection interval (seconds) | `300` |
 | `LOG_LEVEL` | Logging level | `INFO` |
 
-## Database Options
+## Database
 
-**SQLite (Default):**
-```env
-DATABASE_URL=sqlite:///briefbot.db
-```
+This bot uses **Supabase** (PostgreSQL) as the primary database.
 
-**PostgreSQL (Production):**
-```env
-DATABASE_URL=postgresql://briefbot:password@db:5432/briefbot
-```
+**Why Supabase?**
+- Free tier: 500MB storage, unlimited API requests
+- Web dashboard to view/edit data
+- Automatic backups
+- No server management needed
+
+**Auto-Cleanup:** Messages are automatically deleted after each brief is generated, keeping storage minimal (~1MB).
 
 ## Deployment
 

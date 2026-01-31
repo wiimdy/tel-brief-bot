@@ -1,13 +1,10 @@
-"""Message collector for gathering messages from monitored chats."""
+"""Message collector for gathering messages from monitored chats using Supabase."""
 
 import logging
-from datetime import datetime, timedelta
-from typing import List, Optional
+from datetime import datetime
+from typing import List, Dict, Any, Optional
 
-from sqlalchemy.orm import Session
-
-from src.db.database import db
-from src.db.models import ChatSettings, CollectedMessage, BriefHistory
+from src.db.supabase_client import get_supabase
 from src.userbot.client import TelethonClient, get_telethon_client
 
 logger = logging.getLogger(__name__)
@@ -23,6 +20,7 @@ class MessageCollector:
             client: Telethon client to use, or None to use global instance
         """
         self.client = client or get_telethon_client()
+        self.db = get_supabase()
 
     async def collect_from_chat(
         self, chat_id: int, since: Optional[datetime] = None, limit: int = 100
@@ -42,46 +40,34 @@ class MessageCollector:
         if not messages:
             return 0
 
-        session: Session = db.get_sync_session()
         collected = 0
+        messages_to_insert = []
 
-        try:
-            for msg in messages:
-                # Check if message already exists
-                existing = (
-                    session.query(CollectedMessage)
-                    .filter_by(
-                        source_chat_id=msg["chat_id"], message_id=msg["message_id"]
-                    )
-                    .first()
-                )
+        for msg in messages:
+            # Check if message already exists
+            if self.db.message_exists(msg["chat_id"], msg["message_id"]):
+                continue
 
-                if existing:
-                    continue
+            # Prepare message for insertion
+            messages_to_insert.append(
+                {
+                    "source_chat_id": msg["chat_id"],
+                    "source_chat_name": msg.get("chat_name"),
+                    "sender_id": msg.get("sender_id"),
+                    "sender_name": msg.get("sender_name"),
+                    "message_id": msg["message_id"],
+                    "text": msg["text"],
+                    "timestamp": msg["timestamp"].isoformat()
+                    if msg.get("timestamp")
+                    else None,
+                    "processed": False,
+                }
+            )
 
-                # Create new message record
-                collected_msg = CollectedMessage(
-                    source_chat_id=msg["chat_id"],
-                    source_chat_name=msg.get("chat_name"),
-                    sender_id=msg.get("sender_id"),
-                    sender_name=msg.get("sender_name"),
-                    message_id=msg["message_id"],
-                    text=msg["text"],
-                    timestamp=msg["timestamp"],
-                    processed=False,
-                )
-                session.add(collected_msg)
-                collected += 1
-
-            session.commit()
+        # Batch insert
+        if messages_to_insert:
+            collected = self.db.add_collected_messages_batch(messages_to_insert)
             logger.info(f"Collected {collected} new messages from chat {chat_id}")
-
-        except Exception as e:
-            logger.error(f"Error saving messages: {e}")
-            session.rollback()
-
-        finally:
-            session.close()
 
         return collected
 
@@ -97,20 +83,8 @@ class MessageCollector:
         Returns:
             Total number of messages collected
         """
-        session: Session = db.get_sync_session()
-
-        try:
-            # Get all active chats for this user
-            chats = (
-                session.query(ChatSettings)
-                .filter_by(added_by_user_id=user_id, active=True)
-                .all()
-            )
-
-            chat_ids = [chat.chat_id for chat in chats]
-
-        finally:
-            session.close()
+        chats = self.db.get_user_chats(user_id)
+        chat_ids = [chat.get("chat_id") for chat in chats if chat.get("chat_id")]
 
         if not chat_ids:
             logger.debug(f"No monitored chats for user {user_id}")
@@ -132,82 +106,46 @@ class MessageCollector:
 
     def get_unprocessed_messages(
         self, chat_ids: Optional[List[int]] = None
-    ) -> List[CollectedMessage]:
+    ) -> List[Dict[str, Any]]:
         """Get all unprocessed messages.
 
         Args:
             chat_ids: Optional list of chat IDs to filter by
 
         Returns:
-            List of unprocessed CollectedMessage objects
+            List of unprocessed message dictionaries
         """
-        session: Session = db.get_sync_session()
+        return self.db.get_unprocessed_messages(chat_ids)
 
-        try:
-            query = session.query(CollectedMessage).filter_by(processed=False)
-
-            if chat_ids:
-                query = query.filter(CollectedMessage.source_chat_id.in_(chat_ids))
-
-            # Order by timestamp
-            messages = query.order_by(CollectedMessage.timestamp.asc()).all()
-
-            return messages
-
-        finally:
-            session.close()
-
-    def mark_messages_processed(self, message_ids: List[int]):
+    def mark_messages_processed(self, message_ids: List[int]) -> bool:
         """Mark messages as processed.
 
         Args:
             message_ids: List of message IDs to mark as processed
+
+        Returns:
+            True if successful
         """
-        session: Session = db.get_sync_session()
+        return self.db.mark_messages_processed(message_ids)
 
-        try:
-            session.query(CollectedMessage).filter(
-                CollectedMessage.id.in_(message_ids)
-            ).update({CollectedMessage.processed: True}, synchronize_session=False)
-
-            session.commit()
-            logger.debug(f"Marked {len(message_ids)} messages as processed")
-
-        except Exception as e:
-            logger.error(f"Error marking messages processed: {e}")
-            session.rollback()
-
-        finally:
-            session.close()
-
-    def clear_processed_messages(self, older_than_hours: int = 24):
-        """Delete old processed messages.
+    def delete_messages(self, message_ids: List[int]) -> int:
+        """Delete messages by IDs (cleanup after brief).
 
         Args:
-            older_than_hours: Delete messages older than this many hours
+            message_ids: List of message IDs to delete
+
+        Returns:
+            Number of messages deleted
         """
-        session: Session = db.get_sync_session()
-        cutoff = datetime.utcnow() - timedelta(hours=older_than_hours)
+        return self.db.delete_messages_by_ids(message_ids)
 
-        try:
-            deleted = (
-                session.query(CollectedMessage)
-                .filter(
-                    CollectedMessage.processed == True,
-                    CollectedMessage.created_at < cutoff,
-                )
-                .delete(synchronize_session=False)
-            )
+    def cleanup_processed_messages(self) -> int:
+        """Delete all processed messages.
 
-            session.commit()
-            logger.info(f"Deleted {deleted} old processed messages")
-
-        except Exception as e:
-            logger.error(f"Error clearing old messages: {e}")
-            session.rollback()
-
-        finally:
-            session.close()
+        Returns:
+            Number of messages deleted
+        """
+        return self.db.delete_processed_messages()
 
     def get_last_brief_time(self, user_id: int) -> Optional[datetime]:
         """Get the time of the last brief sent to a user.
@@ -218,26 +156,11 @@ class MessageCollector:
         Returns:
             Datetime of last brief or None
         """
-        session: Session = db.get_sync_session()
-
-        try:
-            last_brief = (
-                session.query(BriefHistory)
-                .filter_by(recipient_id=user_id)
-                .order_by(BriefHistory.brief_time.desc())
-                .first()
-            )
-
-            if last_brief:
-                return last_brief.brief_time
-            return None
-
-        finally:
-            session.close()
+        return self.db.get_last_brief_time(user_id)
 
     def record_brief_sent(
         self, user_id: int, message_count: int, topics: List[str], summary_preview: str
-    ):
+    ) -> None:
         """Record that a brief was sent.
 
         Args:
@@ -246,27 +169,15 @@ class MessageCollector:
             topics: Topics covered
             summary_preview: Preview of the summary
         """
-        import json
-
-        session: Session = db.get_sync_session()
-
-        try:
-            history = BriefHistory(
-                recipient_id=user_id,
-                brief_time=datetime.utcnow(),
-                message_count=message_count,
-                topics_covered=json.dumps(topics),
-                summary_preview=summary_preview[:500] if summary_preview else None,
-            )
-            session.add(history)
-            session.commit()
-
-        except Exception as e:
-            logger.error(f"Error recording brief history: {e}")
-            session.rollback()
-
-        finally:
-            session.close()
+        self.db.add_brief_history(
+            {
+                "recipient_id": user_id,
+                "brief_time": datetime.utcnow().isoformat(),
+                "message_count": message_count,
+                "topics_covered": topics,
+                "summary_preview": summary_preview[:500] if summary_preview else None,
+            }
+        )
 
 
 # Singleton instance
