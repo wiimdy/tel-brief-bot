@@ -1,5 +1,5 @@
 # Telegram Bot
-python-telegram-bot==20.7
+python-telegram-bot==21.10
 
 # Telegram User API (MTProto)
 telethon==1.36.0
@@ -7,13 +7,13 @@ telethon==1.36.0
 # Database
 SQLAlchemy==2.0.25
 alembic==1.13.1
-supabase==2.3.4
+supabase==2.10.0
 
 # Scheduling
 APScheduler==3.10.4
 
 # Timezone support
-pytz==2024.1
+pytz==2024.2
 
 # Environment variables
 python-dotenv==1.0.0
@@ -23,3 +23,4 @@ aiofiles==23.2.1
 
 # AI - Google Gemini
 google-generativeai==0.8.3
+protobuf<6.0.0,>=3.20.2

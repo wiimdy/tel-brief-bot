@@ -68,7 +68,8 @@ async def schedule_chat(
         try:
             # Parse time string (HH:MM format)
             hour, minute = brief_time_str.split(":")
-            brief_time = time(hour=int(hour), minute=int(minute))
+            # Create time object with timezone info
+            brief_time = time(hour=int(hour), minute=int(minute), tzinfo=tz)
 
             # Schedule daily job in user's timezone
             application.job_queue.run_daily(
@@ -78,7 +79,6 @@ async def schedule_chat(
                 chat_id=chat_id,
                 name=f"brief_{chat_id}_{brief_time_str}",
                 data={"chat_id": chat_id, "timezone": timezone},
-                job_kwargs={"timezone": tz},
             )
 
             logger.info(

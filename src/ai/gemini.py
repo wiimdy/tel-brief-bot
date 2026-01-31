@@ -1,5 +1,6 @@
 """Google Gemini AI integration for message analysis."""
 
+import json
 import logging
 from typing import List, Dict, Any, Optional
 
@@ -96,8 +97,6 @@ Respond with ONLY valid JSON array, no other text. Example:
             response = await self.generate(prompt)
 
             # Parse JSON response
-            import json
-
             # Clean up response - remove markdown code blocks if present
             response = response.strip()
             if response.startswith("```"):
