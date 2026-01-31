@@ -17,6 +17,9 @@ class ChatSettings(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     chat_id = Column(Integer, unique=True, nullable=False, index=True)
+    added_by_user_id = Column(
+        Integer, nullable=True, index=True
+    )  # Tracks who added this chat
     timezone = Column(String(50), nullable=False, default="UTC")
     brief_times = Column(
         Text, nullable=False, default='["09:00", "18:00"]'
