@@ -55,3 +55,43 @@ class ChatSettings(Base):
 
     def __repr__(self) -> str:
         return f"<ChatSettings(chat_id={self.chat_id}, timezone={self.timezone}, active={self.active})>"
+
+
+class CollectedMessage(Base):
+    """Temporarily stored messages for briefing."""
+
+    __tablename__ = "collected_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_chat_id = Column(Integer, nullable=False, index=True)
+    source_chat_name = Column(String(255), nullable=True)
+    sender_id = Column(Integer, nullable=True)
+    sender_name = Column(String(255), nullable=True)
+    message_id = Column(Integer, nullable=False)
+    text = Column(Text, nullable=True)
+    timestamp = Column(DateTime, nullable=False, index=True)
+    processed = Column(Boolean, default=False, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        text_preview = (
+            (self.text[:50] + "...") if self.text and len(self.text) > 50 else self.text
+        )
+        return f"<CollectedMessage(chat={self.source_chat_id}, sender={self.sender_name}, text={text_preview})>"
+
+
+class BriefHistory(Base):
+    """History of sent briefs for tracking."""
+
+    __tablename__ = "brief_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    recipient_id = Column(Integer, nullable=False, index=True)
+    brief_time = Column(DateTime, nullable=False)
+    message_count = Column(Integer, default=0)
+    topics_covered = Column(Text, nullable=True)  # JSON array
+    summary_preview = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<BriefHistory(recipient={self.recipient_id}, time={self.brief_time}, messages={self.message_count})>"

@@ -635,3 +635,107 @@ async def removechat_command(
 
     finally:
         session.close()
+
+
+async def topics_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /topics command - View or set topics for AI filtering.
+
+    Usage:
+        /topics - Show current topics
+        /topics web3,ai,security - Set new topics
+    """
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    args = context.args
+
+    session: Session = db.get_sync_session()
+    try:
+        # Get chat settings for current chat, or the user's first chat
+        chat_settings = session.query(ChatSettings).filter_by(chat_id=chat_id).first()
+
+        if not chat_settings:
+            # Try to find any chat owned by this user
+            chat_settings = (
+                session.query(ChatSettings)
+                .filter_by(added_by_user_id=user_id, active=True)
+                .first()
+            )
+
+        if not chat_settings:
+            await update.message.reply_text(
+                "❌ No chats configured yet.\n\n"
+                "Use /start to initialize or /addchat to add a chatroom."
+            )
+            return
+
+        # If no args, show current topics
+        if not args:
+            topics = chat_settings.get_topics()
+
+            if topics:
+                message = (
+                    "📌 **Current Topics:**\n\n"
+                    + "\n".join(f"  • {topic}" for topic in topics)
+                    + "\n\n"
+                    "These topics are used by AI to filter relevant messages.\n\n"
+                    "To change topics:\n"
+                    "`/topics web3,ai,security,crypto`"
+                )
+            else:
+                message = (
+                    "📌 **No Topics Set**\n\n"
+                    "Topics help the AI filter messages that matter to you.\n\n"
+                    "Examples:\n"
+                    "`/topics web3,ai,security`\n"
+                    "`/topics crypto,defi,nft`\n"
+                    "`/topics tech,startup,investing`\n\n"
+                    "The AI will analyze messages and only include those "
+                    "related to your topics in the brief."
+                )
+
+            await update.message.reply_text(message, parse_mode="Markdown")
+            return
+
+        # Set new topics
+        # Join all args in case user used spaces
+        topics_str = " ".join(args)
+        # Split by comma and clean up
+        new_topics = [t.strip().lower() for t in topics_str.split(",") if t.strip()]
+
+        if not new_topics:
+            await update.message.reply_text(
+                "❌ No valid topics provided.\n\n"
+                "Use comma-separated topics:\n"
+                "`/topics web3,ai,security`"
+            )
+            return
+
+        # Limit topics to reasonable number
+        if len(new_topics) > 10:
+            new_topics = new_topics[:10]
+            await update.message.reply_text(
+                "⚠️ Limited to 10 topics maximum. Extra topics were ignored."
+            )
+
+        # Update topics
+        chat_settings.set_topics(new_topics)
+        session.commit()
+
+        await update.message.reply_text(
+            f"✅ Topics updated!\n\n"
+            f"📌 **Your Topics:**\n"
+            + "\n".join(f"  • {topic}" for topic in new_topics)
+            + "\n\n"
+            "The AI will filter messages based on these topics.\n"
+            "Use `/test` to see a sample brief.",
+            parse_mode="Markdown",
+        )
+
+        logger.info(f"User {user_id} updated topics to: {new_topics}")
+
+    except Exception as e:
+        logger.error(f"Error in topics command: {e}")
+        await update.message.reply_text(f"❌ Error updating topics: {str(e)}")
+
+    finally:
+        session.close()

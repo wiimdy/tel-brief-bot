@@ -32,6 +32,27 @@ class Config:
     # Log level
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
+    # Telegram User API (for message collection)
+    TELEGRAM_API_ID: int = int(os.getenv("TELEGRAM_API_ID", "0"))
+    TELEGRAM_API_HASH: str = os.getenv("TELEGRAM_API_HASH", "")
+    TELEGRAM_PHONE: str = os.getenv("TELEGRAM_PHONE", "")
+    TELEGRAM_SESSION_PATH: str = os.getenv("TELEGRAM_SESSION_PATH", "sessions/userbot")
+
+    # Google Gemini AI
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+
+    # Brief recipient (your personal chat ID for receiving briefs)
+    BRIEF_RECIPIENT_ID: int = int(os.getenv("BRIEF_RECIPIENT_ID", "0"))
+
+    # Message collection settings
+    COLLECTION_INTERVAL: int = int(os.getenv("COLLECTION_INTERVAL", "300"))  # 5 minutes
+
+    # Feature flags
+    ENABLE_MESSAGE_COLLECTION: bool = (
+        os.getenv("ENABLE_MESSAGE_COLLECTION", "false").lower() == "true"
+    )
+
     @classmethod
     def validate(cls) -> bool:
         """Validate required configuration.
@@ -46,6 +67,36 @@ class Config:
             raise ValueError(
                 "TELEGRAM_BOT_TOKEN is required. "
                 "Please set it in .env file or environment variables."
+            )
+        return True
+
+    @classmethod
+    def validate_message_collection(cls) -> bool:
+        """Validate message collection configuration.
+
+        Returns:
+            True if message collection config is valid
+
+        Raises:
+            ValueError: If required configuration is missing
+        """
+        errors = []
+
+        if not cls.TELEGRAM_API_ID:
+            errors.append("TELEGRAM_API_ID is required for message collection")
+        if not cls.TELEGRAM_API_HASH:
+            errors.append("TELEGRAM_API_HASH is required for message collection")
+        if not cls.TELEGRAM_PHONE:
+            errors.append("TELEGRAM_PHONE is required for message collection")
+        if not cls.GEMINI_API_KEY:
+            errors.append("GEMINI_API_KEY is required for AI summarization")
+        if not cls.BRIEF_RECIPIENT_ID:
+            errors.append("BRIEF_RECIPIENT_ID is required (your Telegram user ID)")
+
+        if errors:
+            raise ValueError(
+                "Message collection configuration errors:\n"
+                + "\n".join(f"  - {e}" for e in errors)
             )
         return True
 

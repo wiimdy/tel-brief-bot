@@ -1,17 +1,16 @@
-# Telegram Brief Bot 🤖
+# Telegram Brief Bot
 
-A Telegram bot that sends scheduled briefings at user-configured times with timezone support. Perfect for daily updates, news digests, and personalized notifications.
+A Telegram bot that sends scheduled briefings with AI-powered message summarization. Collects messages from your Telegram chats, filters by topics you care about (web3, AI, security, etc.), and delivers intelligent summaries at your preferred times.
 
-## Features ✨
+## Features
 
-- **📅 Timezone-Aware Scheduling**: Configure briefs in your local timezone with automatic DST handling
-- **⏰ Multiple Daily Briefs**: Set multiple brief times (e.g., 09:00, 15:00, 21:00)
-- **📌 Custom Topics**: Configure topics of interest for personalized content
-- **👥 Multi-User Support**: Each chat has independent settings
-- **🔗 Multi-Chat Management**: Add and manage multiple external chatrooms by ID
-- **💾 Persistent Storage**: SQLite (default) or PostgreSQL for production
-- **🐳 Docker Ready**: Easy deployment with Docker and docker-compose
-- **🔄 Auto-Rescheduling**: Settings changes instantly update scheduled jobs
+- **AI-Powered Briefings**: Uses Google Gemini to analyze and summarize messages from your Telegram chats
+- **Topic Filtering**: AI filters messages based on your interests (web3, ai, security, crypto, etc.)
+- **Timezone-Aware Scheduling**: Configure briefs in your local timezone with automatic DST handling
+- **Multiple Daily Briefs**: Set multiple brief times (e.g., 09:00, 15:00, 21:00)
+- **Multi-Chat Monitoring**: Monitor multiple channels/groups and get aggregated briefs
+- **Persistent Storage**: SQLite (default) or PostgreSQL for production
+- **Docker Ready**: Easy deployment with Docker and docker-compose
 
 ## Architecture
 
@@ -19,259 +18,220 @@ A Telegram bot that sends scheduled briefings at user-configured times with time
 tel-brief-bot/
 ├── src/
 │   ├── bot/
-│   │   ├── handlers.py      # Command handlers (/start, /settings, etc.)
+│   │   ├── handlers.py      # Command handlers (/start, /topics, etc.)
 │   │   ├── scheduler.py     # APScheduler timezone-aware scheduling
-│   │   └── briefing.py      # Brief generation logic
+│   │   └── briefing.py      # Brief generation with AI
 │   ├── db/
-│   │   ├── models.py        # SQLAlchemy models (ChatSettings)
-│   │   └── database.py      # Database connection management
+│   │   ├── models.py        # SQLAlchemy models
+│   │   └── database.py      # Database connection
+│   ├── userbot/             # Telegram User API (Telethon)
+│   │   ├── client.py        # Telethon wrapper
+│   │   ├── collector.py     # Message collection
+│   │   └── auth.py          # Authentication script
+│   ├── ai/                  # AI analysis
+│   │   ├── gemini.py        # Google Gemini client
+│   │   └── analyzer.py      # Message analysis
 │   ├── config.py            # Environment configuration
 │   └── main.py              # Entry point
+├── sessions/                # Telethon session files
 ├── Dockerfile
 ├── docker-compose.yml
 └── requirements.txt
 ```
 
-## Quick Start 🚀
+## Quick Start
 
-### 1. Get a Telegram Bot Token
+### 1. Get Required Credentials
 
+**Telegram Bot Token:**
 1. Message [@BotFather](https://t.me/BotFather) on Telegram
-2. Send `/newbot` and follow the instructions
+2. Send `/newbot` and follow instructions
 3. Copy your bot token
+
+**Telegram User API (for message collection):**
+1. Go to [my.telegram.org/apps](https://my.telegram.org/apps)
+2. Log in with your phone number
+3. Create a new application
+4. Note the `api_id` and `api_hash`
+
+**Google Gemini API:**
+1. Go to [Google AI Studio](https://makersuite.google.com/app/apikey)
+2. Create an API key
+3. Copy the API key
+
+**Your Telegram User ID:**
+1. Message [@userinfobot](https://t.me/userinfobot) on Telegram
+2. Note your user ID number
 
 ### 2. Configure Environment
 
 ```bash
-# Copy the example environment file
 cp .env.example .env
-
-# Edit .env and add your bot token
 nano .env
 ```
 
-Update `.env`:
+Update `.env` with your credentials:
+
 ```env
+# Required
 TELEGRAM_BOT_TOKEN=your_bot_token_here
+
+# For AI briefings (optional but recommended)
+ENABLE_MESSAGE_COLLECTION=true
+TELEGRAM_API_ID=12345678
+TELEGRAM_API_HASH=abcdef1234567890abcdef1234567890
+TELEGRAM_PHONE=+1234567890
+GEMINI_API_KEY=your_gemini_api_key_here
+BRIEF_RECIPIENT_ID=123456789
+
+# Preferences
 DEFAULT_TIMEZONE=Asia/Seoul
-DEFAULT_BRIEF_TIMES=15:00,21:00
+DEFAULT_BRIEF_TIMES=09:00,18:00
 ```
 
-### 3. Run with Docker (Recommended)
+### 3. Authenticate Telegram User API
+
+Before running the bot, authenticate your Telegram account:
 
 ```bash
-# Build and start the bot
-docker-compose up -d
-
-# View logs
-docker-compose logs -f bot
-
-# Stop the bot
-docker-compose down
-```
-
-### 4. Run Locally (Development)
-
-```bash
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
 # Install dependencies
 pip install -r requirements.txt
 
-# Run the bot
+# Run authentication
+python -m src.userbot.auth
+```
+
+Enter the verification code sent to your Telegram app. This creates a session file so the bot can access your messages.
+
+### 4. Run the Bot
+
+**With Docker (Recommended):**
+```bash
+docker-compose up -d
+docker-compose logs -f bot
+```
+
+**Locally:**
+```bash
 python -m src.main
 ```
 
-## Usage 💬
+### 5. Configure Your Briefs
 
-### Bot Commands
+In Telegram, chat with your bot:
+
+```
+/start                           # Initialize
+/addchat @cryptonews             # Add a channel to monitor
+/addchat -1001234567890          # Add by chat ID
+/topics web3,ai,security,crypto  # Set your interests
+/test                            # Get a sample brief
+```
+
+## Bot Commands
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `/start` | Initialize bot for your chat | `/start` |
-| `/settings` | Configure timezone, times, and topics | `/settings timezone=Asia/Seoul times=15:00,21:00 topics=tech,news` |
+| `/start` | Initialize bot | `/start` |
+| `/topics` | View or set topic filters | `/topics web3,ai,security` |
+| `/settings` | Configure timezone and times | `/settings timezone=Asia/Seoul times=09:00,21:00` |
 | `/status` | View current configuration | `/status` |
 | `/test` | Send test brief immediately | `/test` |
-| `/addchat` | Add external chatroom to receive briefs | `/addchat @minchoisfuture` or `/addchat -123456789` |
-| `/editchat` | Edit settings for a specific chatroom | `/editchat @mychannel timezone=UTC` |
-| `/listchats` | List all chatrooms you manage | `/listchats` |
-| `/removechat` | Remove a chatroom (soft delete) | `/removechat @minchoisfuture` |
+| `/addchat` | Add chatroom to monitor | `/addchat @channel` or `/addchat -123456` |
+| `/editchat` | Edit chatroom settings | `/editchat @channel timezone=UTC` |
+| `/listchats` | List monitored chatrooms | `/listchats` |
+| `/removechat` | Stop monitoring a chatroom | `/removechat @channel` |
 
-### Configuration Examples
+## How It Works
 
-**Set timezone and brief times:**
+1. **Message Collection**: Every 5 minutes (configurable), the bot collects messages from your monitored chats using the Telegram User API (Telethon).
+
+2. **AI Analysis**: At scheduled brief times, Gemini AI:
+   - Filters messages relevant to your topics
+   - Summarizes important discussions
+   - Groups by topic/chat
+
+3. **Brief Delivery**: The bot sends a formatted brief to you with:
+   - Message statistics
+   - Topic-filtered summaries
+   - Source attribution
+
+## Example Brief
+
 ```
-/settings timezone=America/New_York times=09:00,21:00
+Your Message Brief
+Friday, January 31, 2025
+09:00 AM KST
+------------------------------
+
+Stats
+- Total messages: 142
+- Relevant to your topics: 23
+- Topics: web3, ai, security
+
+------------------------------
+
+Summary
+
+Web3 & Crypto:
+- @CryptoAlerts: Bitcoin broke $100k, discussion of ETF inflows
+- @DeFiNews: New L2 launch with improved gas efficiency
+
+AI & Technology:
+- @TechNews: OpenAI released new model, benchmarks discussed
+- @AIResearch: Paper on efficient fine-tuning methods
+
+Security:
+- @SecurityAlerts: New vulnerability in popular library, patch available
+
+------------------------------
+
+Commands: /topics, /listchats, /status
 ```
 
-**Add topics:**
-```
-/settings topics=technology,news,weather
-```
-
-**Full configuration:**
-```
-/settings timezone=Europe/London times=08:00,12:00,18:00 topics=tech,finance
-```
-
-### Multi-Chat Management
-
-Manage multiple chatrooms from a single conversation. You can use either `@username` (for public chats) or numeric `chat_id`:
-
-**Add a new chatroom:**
-```
-/addchat @minchoisfuture
-/addchat -123456789
-```
-
-**Configure the chatroom:**
-```
-/editchat @minchoisfuture timezone=Asia/Seoul times=09:00,21:00 topics=news
-/editchat -123456789 timezone=UTC
-```
-
-**View all your managed chatrooms:**
-```
-/listchats
-```
-
-**Remove a chatroom:**
-```
-/removechat @minchoisfuture
-/removechat -123456789
-```
-
-> **Note**: 
-> - You can only edit/remove chatrooms you added
-> - `@username` works for public channels/groups, or chats where the bot is already a member
-> - For private groups, use the numeric chat_id (get it from [@userinfobot](https://t.me/userinfobot))
-
-## Supported Timezones 🌍
-
-The bot supports all IANA timezone strings. Common examples:
-
-- `UTC`
-- `America/New_York`
-- `Europe/London`
-- `Asia/Tokyo`
-- `Asia/Seoul`
-- `Australia/Sydney`
-
-[Full timezone list](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)
-
-## Environment Variables 🔧
+## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `TELEGRAM_BOT_TOKEN` | **Required**. Your Telegram bot token | - |
+| `TELEGRAM_BOT_TOKEN` | **Required**. Bot token from @BotFather | - |
 | `DATABASE_URL` | Database connection string | `sqlite:///briefbot.db` |
 | `DEFAULT_TIMEZONE` | Default timezone for new chats | `UTC` |
-| `DEFAULT_BRIEF_TIMES` | Default brief times (comma-separated) | `09:00,18:00` |
-| `LOG_LEVEL` | Logging level (DEBUG, INFO, WARNING, ERROR) | `INFO` |
-| `SQL_DEBUG` | Enable SQL query logging | `false` |
+| `DEFAULT_BRIEF_TIMES` | Default brief times | `09:00,18:00` |
+| `ENABLE_MESSAGE_COLLECTION` | Enable AI briefings | `false` |
+| `TELEGRAM_API_ID` | Telegram API ID | - |
+| `TELEGRAM_API_HASH` | Telegram API Hash | - |
+| `TELEGRAM_PHONE` | Your phone number | - |
+| `GEMINI_API_KEY` | Google Gemini API key | - |
+| `GEMINI_MODEL` | Gemini model to use | `gemini-1.5-flash` |
+| `BRIEF_RECIPIENT_ID` | Your Telegram user ID | - |
+| `COLLECTION_INTERVAL` | Message collection interval (seconds) | `300` |
+| `LOG_LEVEL` | Logging level | `INFO` |
 
-## Database Options 💾
+## Database Options
 
-### SQLite (Default)
-
-Perfect for single-instance deployments:
+**SQLite (Default):**
 ```env
 DATABASE_URL=sqlite:///briefbot.db
 ```
 
-### PostgreSQL (Production)
-
-For high-concurrency and multiple instances:
-
-1. Uncomment PostgreSQL service in `docker-compose.yml`
-2. Update `.env`:
+**PostgreSQL (Production):**
 ```env
-DATABASE_URL=postgresql://briefbot:changeme@db:5432/briefbot
+DATABASE_URL=postgresql://briefbot:password@db:5432/briefbot
 ```
 
-## Extending Brief Content 📰
+## Deployment
 
-The brief generation logic is in `src/bot/briefing.py`. Current implementation is a placeholder. You can extend it to:
-
-- **Fetch news from APIs**: NewsAPI, RSS feeds
-- **Generate AI summaries**: OpenAI, Claude, local LLMs
-- **Pull weather data**: OpenWeatherMap
-- **Aggregate crypto/stock prices**: CoinGecko, Alpha Vantage
-- **Summarize chat messages**: Analyze chat history
-
-Example integration:
-```python
-# src/bot/briefing.py
-
-async def generate_brief(chat_settings: ChatSettings) -> str:
-    topics = chat_settings.get_topics()
-    brief_parts = []
-    
-    for topic in topics:
-        if topic == "news":
-            # Fetch news from API
-            news_items = await fetch_news()
-            brief_parts.append(format_news(news_items))
-        elif topic == "weather":
-            weather_data = await fetch_weather()
-            brief_parts.append(format_weather(weather_data))
-    
-    return "\n\n".join(brief_parts)
-```
-
-## Development 🛠️
-
-### Project Structure
-
-- **`src/main.py`**: Application entry point
-- **`src/config.py`**: Configuration management
-- **`src/db/`**: Database models and connections
-- **`src/bot/handlers.py`**: Command handlers
-- **`src/bot/scheduler.py`**: Job scheduling logic
-- **`src/bot/briefing.py`**: Brief content generation
-
-### Running Tests
+### Docker Compose
 
 ```bash
-# Install dev dependencies
-pip install pytest pytest-asyncio
-
-# Run tests (when implemented)
-pytest tests/
-```
-
-### Code Quality
-
-```bash
-# Format code
-black src/
-
-# Lint code
-flake8 src/
-
-# Type checking
-mypy src/
-```
-
-## Deployment 🌐
-
-### Docker Compose (Recommended)
-
-```bash
-# Production deployment
-docker-compose -f docker-compose.yml up -d
-
-# With PostgreSQL
-# 1. Uncomment PostgreSQL service in docker-compose.yml
-# 2. Update DATABASE_URL in .env
 docker-compose up -d
+docker-compose logs -f bot
 ```
 
-### Systemd Service (Linux)
+### Systemd (Linux)
 
 Create `/etc/systemd/system/briefbot.service`:
+
 ```ini
 [Unit]
 Description=Telegram Brief Bot
@@ -289,75 +249,173 @@ Restart=always
 WantedBy=multi-user.target
 ```
 
-Enable and start:
 ```bash
 sudo systemctl enable briefbot
 sudo systemctl start briefbot
-sudo systemctl status briefbot
 ```
 
-## Troubleshooting 🔍
+### AWS EC2 Free Tier (t3.micro)
 
-### Bot not responding
+**Best for:** New AWS accounts (free for 12 months)
 
-1. Check bot token is correct in `.env`
-2. Verify bot is running: `docker-compose logs bot`
-3. Check Telegram API is accessible
+**Why use it:**
+- ✅ **Free for 12 months** (750 hours/month)
+- ✅ Reliable AWS infrastructure
+- ✅ Good for learning AWS
+
+**⚠️ Important:** t3.micro has only 1GB RAM. You MUST add swap space.
+
+#### Setup Steps
+
+**1. Launch EC2 Instance:**
+- Instance type: `t3.micro`
+- OS: Ubuntu 22.04 LTS
+- Storage: 20GB gp2 (within free tier)
+- Security group: Allow SSH (port 22)
+
+**2. Connect and Setup:**
+```bash
+ssh -i your-key.pem ubuntu@your-ec2-ip
+
+# Add 2GB swap file (CRITICAL for 1GB RAM)
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+
+# Make swap permanent
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+
+# Install Docker
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+**3. Deploy the Bot:**
+```bash
+# Clone repository
+git clone https://github.com/yourusername/tel-brief-bot.git
+cd tel-brief-bot
+
+# Create .env file
+nano .env
+# (Add your environment variables)
+
+# Run with Docker Compose
+docker-compose up -d
+
+# Check logs
+docker-compose logs -f bot
+```
+
+**4. Monitor Resources:**
+```bash
+# Check memory usage (should stay under 800MB)
+free -h
+
+# Check swap usage (should be low, <500MB)
+vmstat 1 5
+
+# Check CPU credits (should stay above 0)
+curl http://169.254.169.254/latest/meta-data/instance-type
+```
+
+**5. Auto-start on Boot:**
+```bash
+# Enable Docker auto-start
+sudo systemctl enable docker
+
+# The container will auto-start with Docker
+```
+
+#### After Free Tier (12 months)
+- **Option A:** Continue on t3.micro (~$8-10/month)
+- **Option B:** Migrate to Hetzner CX11 (€3.79/month - better value)
+- **Option C:** Upgrade to t3.small (~$15/month)
+
+#### Troubleshooting EC2
+
+**High memory usage:**
+```bash
+# Check what's using memory
+docker stats
+
+# If swapping too much, restart container
+docker-compose restart
+```
+
+**CPU throttling:**
+```bash
+# Check CPU credit balance
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/EC2 \
+  --metric-name CPUCreditBalance \
+  --dimensions Name=InstanceId,Value=i-xxxxxxxxxxxxx \
+  --start-time 2024-01-01T00:00:00Z \
+  --end-time 2024-01-31T23:59:59Z \
+  --period 3600 \
+  --statistics Average
+```
+
+**Connection issues:**
+- Ensure security group allows outbound HTTPS (port 443) for Telegram API
+- Check instance has internet access via NAT Gateway or public IP
+
+## Troubleshooting
+
+### "User not authorized" error
+Run authentication again:
+```bash
+python -m src.userbot.auth
+```
+
+### Bot not collecting messages
+1. Check `ENABLE_MESSAGE_COLLECTION=true`
+2. Verify Telethon authentication
+3. Make sure you've added chats with `/addchat`
+
+### AI briefs empty
+1. Verify `GEMINI_API_KEY` is set
+2. Check that monitored chats have recent messages
+3. Try broader topics or add more chats
 
 ### Briefs not sending at scheduled time
-
-1. Verify timezone is correct: `/status`
-2. Check scheduler logs for errors
+1. Verify timezone with `/status`
+2. Check logs for errors
 3. Ensure chat is active in database
 
-### Database errors
+## Security Notes
+
+- **Session files**: The `sessions/` directory contains your Telegram session. Keep it secure and never share it.
+- **API keys**: Never commit `.env` or expose API keys
+- **User API**: The bot uses your personal Telegram account to read messages. Use responsibly.
+
+## Development
 
 ```bash
-# Reset database (WARNING: deletes all data)
-rm briefbot.db
-# Restart bot to recreate tables
-docker-compose restart bot
+# Install dev dependencies
+pip install -r requirements.txt
+
+# Format code
+black src/
+
+# Lint
+flake8 src/
+
+# Type check
+mypy src/
 ```
 
-## Future Enhancements 🚀
+## License
 
-Planned features:
-
-- [ ] Web admin dashboard
-- [ ] Brief templates and customization
-- [ ] Integration with news APIs
-- [ ] AI-powered content summarization
-- [ ] User authentication for multi-user server
-- [ ] Inline keyboard for settings
-- [ ] Brief history and archives
-- [ ] Analytics and usage metrics
-
-## Contributing 🤝
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## License 📄
-
-MIT License - feel free to use this project for personal or commercial purposes.
-
-## Support 💪
-
-If you encounter issues:
-
-1. Check the [Troubleshooting](#troubleshooting) section
-2. Review logs: `docker-compose logs bot`
-3. Open an issue on GitHub
+MIT License
 
 ---
 
 **Built with:**
 - [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) v20.7
+- [Telethon](https://github.com/LonamiWebs/Telethon) v1.36.0
+- [Google Generative AI](https://github.com/google/generative-ai-python) v0.8.3
 - [APScheduler](https://github.com/agronholm/apscheduler) v3.10.4
 - [SQLAlchemy](https://www.sqlalchemy.org/) v2.0.25
-
-**Happy briefing! 📬**
