@@ -13,6 +13,10 @@ from src.bot.handlers import (
     settings_command,
     status_command,
     test_command,
+    addchat_command,
+    editchat_command,
+    listchats_command,
+    removechat_command,
 )
 from src.bot.scheduler import schedule_all_chats
 
@@ -88,6 +92,12 @@ def main() -> None:
     application.add_handler(CommandHandler("settings", settings_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("test", test_command))
+
+    # Multi-chat management commands
+    application.add_handler(CommandHandler("addchat", addchat_command))
+    application.add_handler(CommandHandler("editchat", editchat_command))
+    application.add_handler(CommandHandler("listchats", listchats_command))
+    application.add_handler(CommandHandler("removechat", removechat_command))
 
     # Start the bot
     logger.info("Starting bot polling...")
