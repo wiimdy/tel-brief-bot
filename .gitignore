@@ -58,3 +58,6 @@ docker-compose.override.yml
 sessions/*.session
 sessions/*.session-journal
 
+.claude/
+.ruff_cache/
+.sisyphus/
