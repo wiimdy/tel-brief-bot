@@ -127,15 +127,35 @@ class TelethonClient:
         try:
             messages = []
 
+            # Note: Telethon's offset_date returns messages BEFORE that date,
+            # so we fetch recent messages and filter by 'since' afterward
             async for message in self.client.iter_messages(
                 chat_id,
                 limit=limit,
-                offset_date=since,
-                reverse=True if since else False,
+                # Don't use offset_date - it returns messages OLDER than the date
+                # We'll filter by 'since' manually below
             ):
                 # Skip non-text messages or empty messages
                 if not message.text:
                     continue
+
+                # Filter: only include messages AFTER the 'since' datetime
+                if since and message.date:
+                    # Make sure both are comparable (aware datetimes)
+                    msg_date = message.date
+                    if msg_date.tzinfo is None:
+                        from datetime import timezone
+
+                        msg_date = msg_date.replace(tzinfo=timezone.utc)
+                    since_aware = since
+                    if since.tzinfo is None:
+                        from datetime import timezone
+
+                        since_aware = since.replace(tzinfo=timezone.utc)
+
+                    if msg_date <= since_aware:
+                        # Message is older than or equal to 'since', skip it
+                        continue
 
                 # Get sender info
                 sender_name = "Unknown"
